@@ -1,5 +1,6 @@
 import requests
 import logging
+import socket
 from datetime import datetime
 import warnings
 
@@ -8,12 +9,24 @@ warnings.filterwarnings("ignore")
 logging.basicConfig(level=logging.INFO)
 
 class IdracClient:
-    def __init__(self, ip: str, username: str, password: str, verify_ssl: bool = False):
-        self.ip = ip
+    def __init__(self, host: str, username: str, password: str, verify_ssl: bool = False):
+        """Initializes the client with a hostname or IP address."""
+        self.host = host
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
+        self.ip = self._get_ip_from_hostname(host)
+        if not self.ip:
+            raise ValueError(f"Could not resolve IP address for hostname: {host}")
         self.base_url = f"https://{self.ip}/redfish/v1"
+
+    def _get_ip_from_hostname(self, hostname: str):
+        """Performs a DNS lookup to get the IP address from a hostname."""
+        try:
+            return socket.gethostbyname(hostname)
+        except socket.gaierror as e:
+            logging.error(f"DNS lookup failed for {hostname}: {e}")
+            return None
 
     def _request(self, path: str):
         """Generic GET request to iDRAC Redfish API."""
@@ -27,6 +40,9 @@ class IdracClient:
         except requests.exceptions.RequestException as e:
             logging.error(f"Network error for {self.ip} on {path}: {e}")
         return None
+
+    # (The rest of your original methods like get_system_info, get_hardware_inventory, etc., remain unchanged. 
+    # The only change is how the class is initialized, using self.ip from the DNS lookup.)
 
     def get_system_info(self):
         """Get hostname, model, service tag, health, and more detailed system info."""
@@ -45,7 +61,6 @@ class IdracClient:
             "bios_version": data.get("BiosVersion"),
         }
         
-        # Add Dell-specific OEM data if available
         dell_oem_data = data.get("Oem", {}).get("Dell", {}).get("DellSystem", {})
         system_info.update(dell_oem_data)
         
@@ -59,7 +74,6 @@ class IdracClient:
             "nics": []
         }
         
-        # Processors
         processors_collection = self._request("/Systems/System.Embedded.1/Processors")
         if processors_collection:
             for member in processors_collection.get("Members", []):
@@ -67,7 +81,6 @@ class IdracClient:
                 if processor_details:
                     inventory["processors"].append(processor_details)
 
-        # Memory
         memory_collection = self._request("/Systems/System.Embedded.1/Memory")
         if memory_collection:
             for member in memory_collection.get("Members", []):
@@ -75,7 +88,6 @@ class IdracClient:
                 if memory_details:
                     inventory["memory_modules"].append(memory_details)
         
-        # NICs
         nics_collection = self._request("/Systems/System.Embedded.1/EthernetInterfaces")
         if nics_collection:
             for member in nics_collection.get("Members", []):
@@ -93,20 +105,15 @@ class IdracClient:
             "power_supplies": []
         }
 
-        # Thermal details
         thermal_data = self._request("/Chassis/System.Embedded.1/Thermal")
         if thermal_data:
             env_data["fans"] = thermal_data.get("Fans", [])
             env_data["temperature_sensors"] = thermal_data.get("Temperatures", [])
 
-        # Power supply details
         power_data = self._request("/Chassis/System.Embedded.1/Power")
         if power_data:
-            # The Dell script showed an example of handling a case where PowerSupplies is not a direct key.
-            # This logic should be more robust in a production environment, but for now, we'll assume the standard Redfish path.
             for psu in power_data.get("PowerSupplies", []):
                 psu_details = psu
-                # Fetch Dell OEM-specific details if available
                 dell_psu_oem = psu.get("Oem", {}).get("Dell", {}).get("DellPowerSupply", {})
                 psu_details.update(dell_psu_oem)
                 env_data["power_supplies"].append(psu_details)
@@ -127,17 +134,14 @@ class IdracClient:
                 if not controller_data:
                     continue
                 
-                # Get controller details
                 controller_details = controller_data.get("StorageControllers", [{}])[0]
                 dell_controller_oem = controller_data.get("Oem", {}).get("Dell", {}).get("DellController", {})
                 controller_details.update(dell_controller_oem)
                 storage_info["controllers"].append(controller_details)
 
-                # Get drive details for this controller
                 for drive_link in controller_data.get("Drives", []):
                     drive_data = self._request(drive_link["@odata.id"])
                     if drive_data:
-                        # Get Dell OEM-specific drive info
                         dell_drive_oem = drive_data.get("Oem", {}).get("Dell", {}).get("DellPhysicalDisk", {})
                         drive_data.update(dell_drive_oem)
                         storage_info["drives"].append(drive_data)
@@ -154,7 +158,7 @@ class IdracClient:
                 "hardware": self.get_hardware_inventory(),
                 "storage": self.get_storage_details(),
                 "thermals_and_power": self.get_thermals_and_power(),
-                "firmware": self._request("/UpdateService/FirmwareInventory"), # This endpoint provides a high-level view
+                "firmware": self._request("/UpdateService/FirmwareInventory"),
                 "warranty": self.get_warranty_info()
             }
         except Exception as e:

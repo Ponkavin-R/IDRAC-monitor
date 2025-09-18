@@ -31,21 +31,22 @@ const DashboardPage = () => {
       }
     };
 
-    const fetchServerDetails = async (serverIPs) => {
+    const fetchServerDetails = async (serverList) => {
       setIsLoadingDetails(true);
-      const serverDetailsPromises = serverIPs.map(async (ip) => {
+      // Corrected the mapping to use the 'ip' property from each server object
+      const serverDetailsPromises = serverList.map(async (server) => {
         try {
-          const detailsResponse = await fetch(`${API_URL}/${ip}`);
+          const detailsResponse = await fetch(`${API_URL}/${server.ip}`);
           if (!detailsResponse.ok) {
-            console.error(`Failed to fetch details for ${ip}:`, detailsResponse.statusText);
-            return { ip, data: null, status: 'down' };
+            console.error(`Failed to fetch details for ${server.ip}:`, detailsResponse.statusText);
+            return { ip: server.ip, data: null, status: 'down' };
           }
           const details = await detailsResponse.json();
           const powerState = details.data?.system?.power_state?.toLowerCase() || 'off';
-          return { ip, data: details, status: powerState === 'on' ? 'up' : 'down' };
+          return { ip: server.ip, data: details, status: powerState === 'on' ? 'up' : 'down' };
         } catch (e) {
-          console.error(`Network error for ${ip}:`, e);
-          return { ip, data: null, status: 'down' };
+          console.error(`Network error for ${server.ip}:`, e);
+          return { ip: server.ip, data: null, status: 'down' };
         }
       });
 
